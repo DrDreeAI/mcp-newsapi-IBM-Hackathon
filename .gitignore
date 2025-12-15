@@ -123,6 +123,8 @@ dist
 # Build folder
 build/
 dist/
+web/node_modules/
+web/dist/
 
 # Environment variables
 .env*
