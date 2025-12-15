@@ -102,3 +102,45 @@ The server attempts to provide meaningful error messages based on the News API r
 ## Extending
 
 To add more News API endpoints as tools, create a new TypeScript file in `src/tools/`, define its input schema using Zod, implement the handler function to call the News API SDK, and export the tool definition. Then, import and register the new tool in `src/tools/index.ts`.
+
+## Python helpers (optional)
+
+This repository also includes a small Python module (`src/finance_server.py`) that provides MCP tools for finance-related APIs (Yahoo via RapidAPI, NewsAPI, Alpha Vantage). It reads API keys from a local `.env` file using `python-dotenv`.
+
+- **Create a `.env` file** in the project root (do not commit it). Example keys are listed in `.env.example`.
+- **Install dependencies** (example):
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install python-dotenv requests
+```
+
+- **Quick test** (run locally after adding real keys to `.env`):
+
+```bash
+python src/finance_server.py
+```
+
+The `get_yahoo_data_via_snippet` tool inside `src/finance_server.py` implements the RapidAPI snippet adapted to MCP and uses `RAPIDAPI_KEY` from the environment.
+
+### Yahoo options via RapidAPI
+
+You can call the Yahoo options endpoint (RapidAPI hosted at `yahoo-finance-real-time1.p.rapidapi.com`) using the helper `get_yahoo_options_via_snippet(symbol, lang='en-US', region='US')` in `src/finance_server.py`.
+
+Curl example:
+
+```bash
+curl --request GET \
+  --url 'https://yahoo-finance-real-time1.p.rapidapi.com/stock/get-options?symbol=WOOF&lang=en-US&region=US' \
+  --header 'x-rapidapi-host: yahoo-finance-real-time1.p.rapidapi.com' \
+  --header "x-rapidapi-key: $RAPIDAPI_KEY"
+```
+
+In Python (MCP tool):
+
+```python
+from finance_server import get_yahoo_options_via_snippet
+print(get_yahoo_options_via_snippet('WOOF'))
+```
+
+Note: you must set `RAPIDAPI_KEY` in your `.env` for the call to succeed; otherwise RapidAPI replies with an "Invalid API key" message.
