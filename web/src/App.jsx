@@ -11,7 +11,7 @@ export default function App(){
 
   useEffect(()=>{
     const apiBase = (API_BASE || '')
-    const url = apiBase + '/api/portfolio'
+    const url = (apiBase || '') + '/api/portfolio?enrich=1'
 
     const fetchOnce = () => {
       fetch(url)
@@ -62,18 +62,18 @@ export default function App(){
   if(error) return <div className="app-container">Error: {error}</div>
 
   const cash = data.cash || 0
-  const positions = data.positions || {}
   const transactions = (data.transactions || []).slice().reverse()
 
-  const rows = Object.entries(positions).map(([sym,info])=>{
-    const q = info.quantity||0
-    const avg = info.avg_price||0
-    const price = info.last_price || avg
-    const value = price * q
-    return {sym,q,avg,price,value}
-  })
+  // Use enriched data from backend when available
+  const positionsArray = data.positionsArray || Object.entries(data.positions || {}).map(([sym, info]) => ({
+    symbol: sym,
+    quantity: info.quantity || 0,
+    avg_price: info.avg_price || 0,
+    price: info.price || info.last_price || info.avg_price || 0,
+    value: ((info.price || info.last_price || info.avg_price || 0) * (info.quantity || 0))
+  }))
 
-  const totalValue = rows.reduce((s,r)=>s+r.value, cash)
+  const totalValue = data.total_value || positionsArray.reduce((s, p) => s + (p.value || 0), cash)
 
   return (
     <div className="app-container">
@@ -92,7 +92,7 @@ export default function App(){
 
       <div className="hero-card">
         <div className="hero-left">
-          <div className="hero-label">Total balance</div>
+          <div className="hero-label">Valeur actuelle du portefeuille</div>
           <div className="hero-balance">${totalValue.toFixed(2)}</div>
           <div className="hero-change">Cash: ${cash.toFixed(2)} • Positions: ${ (totalValue - cash).toFixed(2) }</div>
         </div>
@@ -103,13 +103,13 @@ export default function App(){
       </div>
 
       <div className="card">
-        <h5>Positions</h5>
-        {rows.length ? (
+        <h5>Actions</h5>
+        {positionsArray.length ? (
           <table className="positions-table">
             <thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Price</th><th>Value</th></tr></thead>
             <tbody>
-              {rows.map(r=> (
-                <tr key={r.sym}><td>{r.sym}</td><td>{r.q}</td><td>${r.avg.toFixed(2)}</td><td>${r.price.toFixed(2)}</td><td>${r.value.toFixed(2)}</td></tr>
+              {positionsArray.map(p => (
+                <tr key={p.symbol}><td>{p.symbol}</td><td>{p.quantity}</td><td>${p.avg_price.toFixed(2)}</td><td>${p.price.toFixed(2)}</td><td>${p.value.toFixed(2)}</td></tr>
               ))}
             </tbody>
           </table>
