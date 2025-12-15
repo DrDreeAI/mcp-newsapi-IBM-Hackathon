@@ -10,6 +10,10 @@ from typing import Dict
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template
+try:
+    from flask_cors import CORS
+except Exception:
+    CORS = None
 
 # Try to import the financial helper to fetch live prices; fall back gracefully
 try:
@@ -23,6 +27,9 @@ PORTFOLIO_FILE = os.getenv("PORTFOLIO_FILE", "portfolio.json")
 PORT = int(os.getenv("PORT", "8000"))
 
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
+if CORS:
+    # allow cross-origin requests from the frontend (Vercel or local ngrok)
+    CORS(app)
 
 
 def _read_portfolio() -> Dict:
