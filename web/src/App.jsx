@@ -1,5 +1,8 @@
 import React, {useEffect, useState} from 'react'
-import ibmLogo from './assets/ibm-logo.svg'
+import ibmLogo from './assets/ibm-logo.png'
+
+// API base can be configured with VITE_API_URL for Vercel deployments.
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 export default function App(){
   const [data, setData] = useState(null)
@@ -7,7 +10,8 @@ export default function App(){
   const [error, setError] = useState(null)
 
   useEffect(()=>{
-    fetch('/api/portfolio')
+    const url = (API_BASE || '') + '/api/portfolio'
+    fetch(url)
       .then(r=>{ if(!r.ok) throw new Error(r.statusText); return r.json() })
       .then(j=>{ setData(j); setLoading(false) })
       .catch(e=>{ setError(e.message); setLoading(false) })
