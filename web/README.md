@@ -43,3 +43,27 @@ Deploy to Vercel (drag & drop)
 Notes about backend
 - If your backend exposes `http://your-backend/api/portfolio`, the frontend will work. For `https`/different domains, make sure the backend allows CORS for the deployed frontend origin.
 - For a production-ready setup, consider moving from `portfolio.json` to a database (Supabase, Postgres, etc.) and exposing a proper REST API.
+
+Connecting to your local MCP quickly (ngrok)
+
+1. Start your MCP backend (SSE) locally on port 8000, e.g.:
+
+```bash
+mcp run src/finance_server.py --transport sse --port 8000
+# or run the Flask dashboard `src/web_dashboard.py` which exposes `/api/portfolio` on the same host
+```
+
+2. In a new terminal start ngrok and copy the HTTPS forwarding URL:
+
+```bash
+ngrok http 8000
+```
+
+3. Set `VITE_API_URL` in Vercel (or in your local `.env.local`) to the ngrok HTTPS URL (no trailing slash). Example:
+
+```
+VITE_API_URL=https://a1b2-c3d4.ngrok-free.app
+```
+
+4. Make sure the backend allows CORS for the frontend origin (for `src/web_dashboard.py` add Flask-CORS or adjust headers). For example, install `flask-cors` and add `CORS(app)` to the Flask app.
+
