@@ -1,23 +1,30 @@
-"""finance_server.py
+"""Finance MCP server
 
-MCP tools for finance-related APIs.
+This module exposes MCP tools to support three Watsonx agents:
+- Expert Tech (uses `search_news(topic='technology')`)
+- Financial Analyst (uses `search_news(topic='finance')` and `get_financial_data`)
+- Portfolio Manager (uses `execute_investment` and `get_portfolio_report`)
 
-Load API keys from a local .env file (use python-dotenv).
+Tools are exposed as `@mcp.tool()` functions using `FastMCP`.
+Configuration is via environment variables loaded from a local `.env` file.
+Persistence: `portfolio.json` holds cash, positions and transaction history.
 """
+
 from __future__ import annotations
 
-import os
-import http.client
 import json
 import logging
+import os
+from datetime import datetime
+from typing import Dict, List, Optional
+
+import requests
 from dotenv import load_dotenv
 
 try:
     from mcp.server.fastmcp import FastMCP
-    MCPF_AVAILABLE = True
-except Exception:
-    # Fallback so the module can be executed for local testing without the MCP package.
-    MCPF_AVAILABLE = False
+except Exception:  # pragma: no cover - graceful fallback for local tests
+    FastMCP = None
 
 load_dotenv()
 
@@ -26,140 +33,266 @@ ALPHA_VANTAGE_KEY = os.getenv("ALPHA_VANTAGE_KEY")
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 NEWSAPI_COUNTRY = os.getenv("NEWSAPI_COUNTRY", "us")
 
-if MCPF_AVAILABLE:
+PORTFOLIO_FILE = os.getenv("PORTFOLIO_FILE", "portfolio.json")
+INITIAL_CASH = float(os.getenv("INITIAL_CASH", "10000"))
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("finance_server")
+
+
+def _ensure_portfolio_file() -> None:
+    """Ensure `portfolio.json` exists with initial structure."""
+    if not os.path.exists(PORTFOLIO_FILE):
+        data = {"cash": INITIAL_CASH, "positions": {}, "transactions": []}
+        with open(PORTFOLIO_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+
+def _read_portfolio() -> Dict:
+    _ensure_portfolio_file()
+    with open(PORTFOLIO_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_portfolio(data: Dict) -> None:
+    tmp = PORTFOLIO_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, default=str)
+    os.replace(tmp, PORTFOLIO_FILE)
+
+
+if FastMCP:
     mcp = FastMCP()
 else:
-    logging.warning(
-        "Could not import 'mcp'. Continuing with a noop decorator so tools can be tested locally."
-    )
-
-    class _DummyMCP:
+    # Provide a noop decorator for local development/testing
+    class _Dummy:
         def tool(self):
-            def decorator(fn):
+            def deco(fn):
                 return fn
 
-            return decorator
+            return deco
 
-    mcp = _DummyMCP()
 
-if not (NEWSAPI_KEY and ALPHA_VANTAGE_KEY and RAPIDAPI_KEY):
-    logging.warning("One or more API keys are not set. Check your .env file.")
+    mcp = _Dummy()
 
 
 @mcp.tool()
-def get_yahoo_data_via_snippet(symbol: str) -> str:
-    """Récupère les infos Yahoo via le code snippet RapidAPI adapté."""
+def search_news(query: str, topic: str = "") -> List[Dict[str, str]]:
+    """Search news and return up to 5 articles.
 
-    if RAPIDAPI_KEY is None:
-        return "Erreur: RAPIDAPI_KEY non configurée"
+    Args:
+        query: search query keywords.
+        topic: 'technology' or 'finance' (controls filtering).
 
-    conn = http.client.HTTPSConnection("yahoo-finance15.p.rapidapi.com")
-
-    headers = {
-        "x-rapidapi-key": RAPIDAPI_KEY,  # Utilisez la variable, pas la clé en dur
-        "x-rapidapi-host": "yahoo-finance15.p.rapidapi.com",
-    }
-
-    endpoint = f"/api/yahoo/qu/quote/{symbol}"
-
-    try:
-        conn.request("GET", endpoint, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
-        return data.decode("utf-8")
-    except Exception as e:
-        return f"Erreur lors de l'appel API : {str(e)}"
-
-
-@mcp.tool()
-def get_yahoo_options_via_snippet(symbol: str, lang: str = "en-US", region: str = "US") -> str:
-    """Récupère les options d'un symbole via l'endpoint RapidAPI "yahoo-finance-real-time1".
-
-    Exemple RapidAPI curl (adapté) :
-
-    curl --request GET \
-      --url 'https://yahoo-finance-real-time1.p.rapidapi.com/stock/get-options?symbol=WOOF&lang=en-US&region=US' \
-      --header 'x-rapidapi-host: yahoo-finance-real-time1.p.rapidapi.com' \
-      --header 'x-rapidapi-key: VOTRE_CLE_ICI'
-
-    Utilise la variable d'environnement `RAPIDAPI_KEY` (chargée via `.env`).
+    Returns:
+        A list of articles (dict) with keys: 'source', 'title', 'summary', 'url'.
     """
+    if not NEWSAPI_KEY:
+        raise RuntimeError("NEWSAPI_KEY is not configured")
 
-    if RAPIDAPI_KEY is None:
-        return "Erreur: RAPIDAPI_KEY non configurée"
+    headers = {"User-Agent": "mcp-newsapi/1.0", "Accept": "application/json"}
 
-    host = "yahoo-finance-real-time1.p.rapidapi.com"
-    conn = http.client.HTTPSConnection(host)
-
-    endpoint = f"/stock/get-options?symbol={symbol}&lang={lang}&region={region}"
-
-    headers = {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": host,
-        "Accept": "application/json",
-    }
+    # Choose endpoint and params by topic
+    if topic.lower() == "technology":
+        url = "https://newsapi.org/v2/top-headlines"
+        params = {"category": "technology", "pageSize": 5, "q": query, "apiKey": NEWSAPI_KEY}
+    else:
+        # For finance or general queries, use everything endpoint and search the query or 'finance'
+        url = "https://newsapi.org/v2/everything"
+        q = f"{query} finance" if topic.lower() == "finance" else query
+        params = {"q": q or "finance", "pageSize": 5, "sortBy": "publishedAt", "apiKey": NEWSAPI_KEY}
 
     try:
-        conn.request("GET", endpoint, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
+        r = requests.get(url, headers=headers, params=params, timeout=10)
+        r.raise_for_status()
+        payload = r.json()
+        articles = payload.get("articles", [])[:5]
+        out = []
+        for a in articles:
+            out.append({
+                "source": a.get("source", {}).get("name"),
+                "title": a.get("title"),
+                "summary": a.get("description") or a.get("content") or "",
+                "url": a.get("url"),
+            })
+        return out
+    except requests.RequestException as e:
+        logger.error("NewsAPI request failed: %s", e)
+        raise RuntimeError(f"NewsAPI request failed: {e}")
 
-        # ensure valid JSON when possible
-        txt = data.decode("utf-8")
+
+@mcp.tool()
+def get_financial_data(symbol: str) -> Dict[str, Optional[str]]:
+    """Get financial data for a symbol (price, marketCap, PER if available).
+
+    Tries Alpha Vantage first, then falls back to Yahoo via RapidAPI.
+    """
+    symbol = symbol.upper().strip()
+
+    result = {"symbol": symbol, "price": None, "marketCap": None, "PER": None}
+
+    if ALPHA_VANTAGE_KEY:
         try:
-            json.loads(txt)
-            return txt
-        except Exception:
-            return txt
-    except Exception as e:
-        return f"Erreur lors de l'appel RapidAPI (options) : {str(e)}"
+            # GLOBAL_QUOTE for current price
+            gq = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": ALPHA_VANTAGE_KEY},
+                timeout=10,
+            )
+            gq.raise_for_status()
+            gdata = gq.json()
+            quote = gdata.get("Global Quote", {})
+            price = quote.get("05. price")
+            if price:
+                result["price"] = price
+
+            # Try OVERVIEW to get MarketCapitalization and PERatio
+            ov = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "OVERVIEW", "symbol": symbol, "apikey": ALPHA_VANTAGE_KEY},
+                timeout=10,
+            )
+            ov.raise_for_status()
+            odata = ov.json()
+            if odata:
+                mc = odata.get("MarketCapitalization")
+                pe = odata.get("PERatio") or odata.get("PE")
+                if mc:
+                    result["marketCap"] = mc
+                if pe:
+                    result["PER"] = pe
+
+            if result["price"]:
+                return result
+        except requests.RequestException as e:
+            logger.info("AlphaVantage call failed, falling back to RapidAPI: %s", e)
+
+    # Fallback to Yahoo via RapidAPI
+    if RAPIDAPI_KEY:
+        try:
+            url = f"https://yahoo-finance15.p.rapidapi.com/api/yahoo/qu/quote/{symbol}"
+            headers = {"x-rapidapi-key": RAPIDAPI_KEY, "x-rapidapi-host": "yahoo-finance15.p.rapidapi.com"}
+            r = requests.get(url, headers=headers, timeout=10)
+            r.raise_for_status()
+            j = r.json()
+            # attempt to extract price and market cap
+            price = None
+            mc = None
+            if isinstance(j, dict):
+                # nested structures differ; attempt common keys
+                quote = j.get("quote") or j.get("price") or {}
+                price = quote.get("regularMarketPrice") or quote.get("regularMarketPreviousClose")
+                if isinstance(price, dict):
+                    price = price.get("raw")
+                mc = quote.get("marketCap")
+                if isinstance(mc, dict):
+                    mc = mc.get("raw")
+            if price:
+                result["price"] = str(price)
+            if mc:
+                result["marketCap"] = str(mc)
+            return result
+        except requests.RequestException as e:
+            logger.error("RapidAPI Yahoo call failed: %s", e)
+
+    raise RuntimeError("Could not retrieve financial data for symbol: %s" % symbol)
 
 
 @mcp.tool()
-def get_top_headlines_newsapi(country: str = NEWSAPI_COUNTRY) -> str:
-    """Récupère les top headlines via NewsAPI (raw JSON string)."""
+def execute_investment(symbol: str, quantity: int, price: float, rationale: str = "") -> Dict[str, str]:
+    """Execute an investment purchase.
 
-    if NEWSAPI_KEY is None:
-        return "Erreur: NEWSAPI_KEY non configurée"
+    Args:
+        symbol: stock symbol
+        quantity: number of shares (int)
+        price: price per share to execute
+        rationale: textual reason for the trade
 
-    conn = http.client.HTTPSConnection("newsapi.org")
-    endpoint = f"/v2/top-headlines?country={country}&apiKey={NEWSAPI_KEY}"
+    Returns:
+        A dict with 'status' and 'message'.
+    """
+    if quantity <= 0 or price <= 0:
+        return {"status": "error", "message": "Quantity and price must be positive values."}
 
-    headers = {
-        "User-Agent": "mcp-newsapi/1.0",
-        "Accept": "application/json",
+    portfolio = _read_portfolio()
+    total_cost = float(quantity) * float(price)
+    cash = float(portfolio.get("cash", 0))
+    if total_cost > cash:
+        return {"status": "error", "message": f"Insufficient cash: need ${total_cost:.2f}, available ${cash:.2f}"}
+
+    # Deduct cash and add position
+    portfolio["cash"] = round(cash - total_cost, 2)
+    positions = portfolio.setdefault("positions", {})
+    pos = positions.get(symbol, {"quantity": 0, "avg_price": 0.0})
+    prev_q = pos.get("quantity", 0)
+    prev_avg = float(pos.get("avg_price", 0))
+    new_q = prev_q + quantity
+    new_avg = ((prev_avg * prev_q) + (price * quantity)) / new_q if new_q else 0.0
+    positions[symbol] = {"quantity": new_q, "avg_price": round(new_avg, 4)}
+
+    # Log transaction
+    tx = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "symbol": symbol,
+        "quantity": quantity,
+        "price": price,
+        "total": round(total_cost, 2),
+        "rationale": rationale,
     }
+    portfolio.setdefault("transactions", []).append(tx)
+    _write_portfolio(portfolio)
 
-    try:
-        conn.request("GET", endpoint, headers=headers)
-        res = conn.getresponse()
-        data = res.read()
-        return data.decode("utf-8")
-    except Exception as e:
-        return f"Erreur lors de l'appel NewsAPI : {str(e)}"
+    return {"status": "success", "message": f"Bought {quantity} {symbol} for ${total_cost:.2f}. New cash: ${portfolio['cash']:.2f}"}
 
 
 @mcp.tool()
-def get_alpha_vantage_quote(symbol: str) -> str:
-    """Récupère une quote via Alpha Vantage (GLOBAL_QUOTE)."""
+def get_portfolio_report() -> str:
+    """Return a human-readable summary of the portfolio.
 
-    if ALPHA_VANTAGE_KEY is None:
-        return "Erreur: ALPHA_VANTAGE_KEY non configurée"
+    Includes cash and positions. Also computes an approximate market value per position using `get_financial_data` when available.
+    """
+    portfolio = _read_portfolio()
+    cash = float(portfolio.get("cash", 0.0))
+    positions = portfolio.get("positions", {})
+    lines = [f"Cash: ${cash:,.2f}", "Positions:"]
+    total_value = cash
+    for sym, info in positions.items():
+        q = int(info.get("quantity", 0))
+        avg = float(info.get("avg_price", 0.0))
+        # Try to get current price; ignore errors
+        try:
+            fd = get_financial_data(sym)
+            price = float(fd.get("price") or avg)
+        except Exception:
+            price = avg
+        value = price * q
+        total_value += value
+        lines.append(f"- {sym}: qty={q}, avg=${avg:.2f}, current=${price:.2f}, value=${value:,.2f}")
+    lines.append(f"Total portfolio approx: ${total_value:,.2f}")
+    return "\n".join(lines)
 
-    conn = http.client.HTTPSConnection("www.alphavantage.co")
-    endpoint = f"/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={ALPHA_VANTAGE_KEY}"
 
-    try:
-        conn.request("GET", endpoint)
-        res = conn.getresponse()
-        data = res.read()
-        return data.decode("utf-8")
-    except Exception as e:
-        return f"Erreur lors de l'appel AlphaVantage : {str(e)}"
+def _register_basic_info() -> None:
+    """Log startup info and basic validation of env variables."""
+    logger.info("Starting Python Finance MCP server")
+    if not NEWSAPI_KEY:
+        logger.warning("NEWSAPI_KEY not set; search_news will fail until configured.")
+    if not ALPHA_VANTAGE_KEY:
+        logger.info("ALPHA_VANTAGE_KEY not set; get_financial_data will try RapidAPI fallback only.")
+    _ensure_portfolio_file()
 
 
 if __name__ == "__main__":
-    # Smoke tests (local only — ensure .env is present with real keys)
-    print("Yahoo AAPL:", get_yahoo_data_via_snippet("AAPL"))
-    print("NewsAPI top headlines:", get_top_headlines_newsapi())
-    print("AlphaVantage IBM:", get_alpha_vantage_quote("IBM"))
+    _register_basic_info()
+    # Try to run the MCP server if FastMCP implements a run/connect method
+    if FastMCP and hasattr(mcp, "run"):
+        # Some versions expose .run() for CLI; call it if present
+        try:
+            mcp.run()
+        except Exception as e:
+            logger.error("Failed to run FastMCP: %s", e)
+            logger.info("You can run this module under an MCP runner that uses stdio transport.")
+    else:
+        # Provide a small smoke test CLI
+        logger.info("FastMCP CLI not available in this environment. Running a smoke test of tools.")
+        print("Smoke test - available tools: search_news, get_financial_data, execute_investment, get_portfolio_report")
