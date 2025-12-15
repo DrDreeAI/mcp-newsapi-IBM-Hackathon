@@ -10,11 +10,52 @@ export default function App(){
   const [error, setError] = useState(null)
 
   useEffect(()=>{
-    const url = (API_BASE || '') + '/api/portfolio'
-    fetch(url)
-      .then(r=>{ if(!r.ok) throw new Error(r.statusText); return r.json() })
-      .then(j=>{ setData(j); setLoading(false) })
-      .catch(e=>{ setError(e.message); setLoading(false) })
+    const apiBase = (API_BASE || '')
+    const url = apiBase + '/api/portfolio'
+
+    const fetchOnce = () => {
+      fetch(url)
+        .then(r=>{ if(!r.ok) throw new Error(r.statusText); return r.json() })
+        .then(j=>{ setData(j); setLoading(false); })
+        .catch(e=>{ setError(e.message); setLoading(false); })
+    }
+
+    // initial fetch
+    fetchOnce()
+
+    // try SSE, fallback to polling every 5s
+    let es = null
+    let pollId = null
+    try {
+      if (apiBase && typeof EventSource !== 'undefined') {
+        es = new EventSource(apiBase + '/sse')
+        es.onmessage = (e) => {
+          try {
+            const j = JSON.parse(e.data)
+            setData(j)
+            setLoading(false)
+          } catch(err) {
+            console.warn('Failed to parse SSE event', err)
+          }
+        }
+        es.onerror = (err) => {
+          // SSE failed; fallback to polling
+          try { es.close() } catch (e){}
+          es = null
+          if (!pollId) pollId = setInterval(fetchOnce, 5000)
+        }
+      } else {
+        pollId = setInterval(fetchOnce, 5000)
+      }
+    } catch(err) {
+      // fallback to polling
+      pollId = setInterval(fetchOnce, 5000)
+    }
+
+    return ()=>{
+      if (es) try{ es.close() }catch(e){}
+      if (pollId) clearInterval(pollId)
+    }
   },[])
 
   if(loading) return <div className="app-container">Loading...</div>
