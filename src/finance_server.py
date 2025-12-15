@@ -22,6 +22,13 @@ import requests
 from dotenv import load_dotenv
 
 try:
+    # Patch transport security BEFORE importing FastMCP
+    import mcp.server.transport_security as transport_sec
+    # Completely disable host validation by replacing the function
+    def _allow_all_validate_request(request, allowed_hosts=None):
+        return  # Always pass validation
+    transport_sec.validate_request = _allow_all_validate_request
+
     from mcp.server.fastmcp import FastMCP
 except Exception:  # pragma: no cover - graceful fallback for local tests
     FastMCP = None
@@ -63,6 +70,10 @@ def _write_portfolio(data: Dict) -> None:
 
 if FastMCP:
     mcp = FastMCP()
+    # Disable DNS rebinding protection to allow ngrok connections
+    if hasattr(mcp, 'settings') and hasattr(mcp.settings, 'enable_dns_rebinding_protection'):
+        mcp.settings.enable_dns_rebinding_protection = False
+        logger.info("DNS rebinding protection disabled for ngrok compatibility")
 else:
     # Provide a noop decorator for local development/testing
     class _Dummy:

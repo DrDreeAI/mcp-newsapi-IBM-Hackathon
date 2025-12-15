@@ -86,6 +86,37 @@ app.get('/api/portfolio', async (req, res) => {
   }
 })
 
+  // SSE endpoint to stream enriched portfolio every 5 seconds
+  app.get('/sse', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.flushHeaders()
+
+    let closed = false
+
+    const send = async () => {
+      try {
+        if (closed) return
+        const url = `http://127.0.0.1:${PORT}/api/portfolio?enrich=1`
+        const r = await fetch(url)
+        if (!r.ok) return
+        const j = await r.json()
+        res.write(`data: ${JSON.stringify(j)}\n\n`)
+      } catch (e) {
+        // ignore errors
+      }
+    }
+
+    send()
+    const id = setInterval(send, 5000)
+
+    req.on('close', () => {
+      closed = true
+      clearInterval(id)
+    })
+  })
+
 // serve static build if present
 const staticDir = path.join(__dirname, 'dist')
 if (fs.existsSync(staticDir)) {

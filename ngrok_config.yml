@@ -1,0 +1,6 @@
+version: 2
+tunnels:
+  mcp:
+    proto: http
+    addr: 8001
+    host_header: "localhost:8001"

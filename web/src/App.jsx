@@ -27,8 +27,9 @@ export default function App(){
     let es = null
     let pollId = null
     try {
-      if (apiBase && typeof EventSource !== 'undefined') {
-        es = new EventSource(apiBase + '/sse')
+      const sseUrl = (apiBase ? apiBase + '/sse' : '/sse')
+      if (typeof EventSource !== 'undefined') {
+        es = new EventSource(sseUrl)
         es.onmessage = (e) => {
           try {
             const j = JSON.parse(e.data)
