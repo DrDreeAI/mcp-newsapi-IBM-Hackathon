@@ -144,3 +144,23 @@ print(get_yahoo_options_via_snippet('WOOF'))
 ```
 
 Note: you must set `RAPIDAPI_KEY` in your `.env` for the call to succeed; otherwise RapidAPI replies with an "Invalid API key" message.
+
+## Portfolio Dashboard (web)
+
+A simple Flask dashboard is available at `src/web_dashboard.py` and displays the contents of `portfolio.json`.
+
+1. Install or update Python deps:
+
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+```
+
+2. Run the dashboard locally (default port 8000):
+
+```bash
+python3 src/web_dashboard.py
+# then open http://localhost:8000/
+```
+
+The dashboard auto-refreshes every 30s and exposes the raw JSON at `/api/portfolio`.
